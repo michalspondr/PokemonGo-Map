@@ -18,11 +18,14 @@ import threading
 import werkzeug.serving
 import pokemon_pb2
 import time
+import SimpleHTTPServer
+import SocketServer
 from google.protobuf.internal import encoder
 from google.protobuf.message import DecodeError
 from s2sphere import *
 from datetime import datetime
 from geopy.geocoders import GoogleV3
+from geopy.distance import vincenty
 from gpsoauth import perform_master_login, perform_oauth
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -54,7 +57,7 @@ SESSION.verify = False
 global_password = None
 global_token = None
 access_token = None
-DEBUG = True
+DEBUG = False
 VERBOSE_DEBUG = False  # if you want to write raw request/response to the console
 COORDS_LATITUDE = 0
 COORDS_LONGITUDE = 0
@@ -78,9 +81,12 @@ numbertoteam = {  # At least I'm pretty sure that's it. I could be wrong and the
 origin_lat, origin_lon = None, None
 is_ampm_clock = False
 
+exportdata = ""
+
 # stuff for in-background search thread
 
 search_thread = None
+notify_thread = None
 
 def memoize(obj):
     cache = obj.cache = {}
@@ -176,9 +182,9 @@ def set_location(location_name):
         loc = geolocator.geocode(location_name)
         origin_lat, origin_lon = local_lat, local_lng = loc.latitude, loc.longitude
         alt = loc.altitude
-        print '[!] Your given location: {}'.format(loc.address.encode('utf-8'))
+        debug('[!] Your given location: {}'.format(loc.address.encode('utf-8')))
 
-    print('[!] lat/long/alt: {} {} {}'.format(local_lat, local_lng, alt))
+    debug('[!] lat/long/alt: {} {} {}'.format(local_lat, local_lng, alt))
     set_location_coords(local_lat, local_lng, alt)
 
 
@@ -315,7 +321,7 @@ def get_profile(service, access_token, api, useauth, *reqq):
     return retrying_api_req(service, api, access_token, req, useauth=useauth)
 
 def login_google(username, password):
-    print '[!] Google login for: {}'.format(username)
+    debug('[!] Google login for: {}'.format(username))
     r1 = perform_master_login(username, password, ANDROID_ID)
     r2 = perform_oauth(username,
                        r1.get('Token', ''),
@@ -326,7 +332,7 @@ def login_google(username, password):
     return r2.get('Auth')
 
 def login_ptc(username, password):
-    print '[!] PTC login for: {}'.format(username)
+    debug('[!] PTC login for: {}'.format(username))
     head = {'User-Agent': 'Niantic App'}
     r = SESSION.get(LOGIN_URL, headers=head)
     if r is None:
@@ -341,7 +347,7 @@ def login_ptc(username, password):
     # Maximum password length is 15 (sign in page enforces this limit, API does not)
 
     if len(password) > 15:
-        print '[!] Trimming password to 15 characters'
+        debug('[!] Trimming password to 15 characters')
         password = password[:15]
 
     data = {
@@ -515,36 +521,58 @@ def login(args):
     if access_token is None:
         raise Exception('[-] Wrong username/password')
 
-    print '[+] RPC Session Token: {} ...'.format(access_token[:25])
+    debug('[+] RPC Session Token: {} ...'.format(access_token[:25]))
 
     api_endpoint = get_api_endpoint(args.auth_service, access_token)
     if api_endpoint is None:
         raise Exception('[-] RPC server offline')
 
-    print '[+] Received API endpoint: {}'.format(api_endpoint)
+    debug('[+] Received API endpoint: {}'.format(api_endpoint))
 
     profile_response = retrying_get_profile(args.auth_service, access_token,
                                             api_endpoint, None)
     if profile_response is None or not profile_response.payload:
         raise Exception('Could not get profile')
 
-    print '[+] Login successful'
+    debug('[+] Login successful')
 
     payload = profile_response.payload[0]
     profile = pokemon_pb2.ResponseEnvelop.ProfilePayload()
     profile.ParseFromString(payload)
-    print '[+] Username: {}'.format(profile.profile.username)
+    debug('[+] Username: {}'.format(profile.profile.username))
 
     creation_time = \
         datetime.fromtimestamp(int(profile.profile.creation_time)
                                / 1000)
-    print '[+] You started playing Pokemon Go on: {}'.format(
-        creation_time.strftime('%Y-%m-%d %H:%M:%S'))
+    debug('[+] You started playing Pokemon Go on: {}'.format(
+        creation_time.strftime('%Y-%m-%d %H:%M:%S')))
 
     for curr in profile.profile.currency:
-        print '[+] {}: {}'.format(curr.type, curr.amount)
+        debug('[+] {}: {}'.format(curr.type, curr.amount))
 
     return api_endpoint, access_token, profile_response
+
+class NotifyHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        #global exportdata
+        data=str(exportdata)
+        print exportdata
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.send_header("Content-length", len(data))
+        self.end_headers()
+        self.wfile.write(data) 
+
+def notify_service():
+    print "notify service thread"
+   
+    args = get_args()
+
+    httpd = SocketServer.TCPServer((args.host, args.port+1), NotifyHandler)
+
+    httpd.serve_forever()
+    #register_background_thread()
+
 
 def main():
     full_path = os.path.realpath(__file__)
@@ -553,21 +581,20 @@ def main():
     args = get_args()
 
     if args.auth_service not in ['ptc', 'google']:
-        print '[!] Invalid Auth service specified'
+        debug('[!] Invalid Auth service specified')
         return
 
-    print('[+] Locale is ' + args.locale)
+    debug('[+] Locale is ' + args.locale)
     pokemonsJSON = json.load(
         open(path + '/locales/pokemon.' + args.locale + '.json'))
 
     if args.debug:
         global DEBUG
-        DEBUG = True
-        print '[!] DEBUG mode on'
+        DEBUG = False
 
     # only get location for first run
     if not (FLOAT_LAT and FLOAT_LONG):
-      print('[+] Getting initial location')
+      debug('[+] Getting initial location')
       retrying_set_location(args.location)
 
     if args.auto_refresh:
@@ -612,13 +639,13 @@ def main():
         process_step(args, api_endpoint, access_token, profile_response,
                      pokemonsJSON, ignore, only)
 
-        print('Completed: ' + str(
+        debug('Completed: ' + str(
             ((step+1) + pos * .25 - .25) / (steplimit2) * 100) + '%')
 
     global NEXT_LAT, NEXT_LONG
     if (NEXT_LAT and NEXT_LONG and
             (NEXT_LAT != FLOAT_LAT or NEXT_LONG != FLOAT_LONG)):
-        print('Update to next location %f, %f' % (NEXT_LAT, NEXT_LONG))
+        debug('Update to next location %f, %f' % (NEXT_LAT, NEXT_LONG))
         set_location_coords(NEXT_LAT, NEXT_LONG, 0)
         NEXT_LAT = 0
         NEXT_LONG = 0
@@ -630,7 +657,7 @@ def main():
 
 def process_step(args, api_endpoint, access_token, profile_response,
                  pokemonsJSON, ignore, only):
-    print('[+] Searching for Pokemon at location {} {}'.format(FLOAT_LAT, FLOAT_LONG))
+    debug('[+] Searching for Pokemon at location {} {}'.format(FLOAT_LAT, FLOAT_LONG))
     origin = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
     step_lat = FLOAT_LAT
     step_long = FLOAT_LONG
@@ -707,14 +734,31 @@ transform_from_wgs_to_gcj(Location(Fort.Latitude, Fort.Longitude))
             "name": pokename
         }
 
+        coord1 = (origin_lat, origin_lon)
+        coord2 = (poke.Latitude, poke.Longitude)
+        remainingTime = (datetime.fromtimestamp(disappear_timestamp) - datetime.now()).total_seconds()
+        #print datetime.fromtimestamp(disappear_timestamp), datetime.now()
+        # distance of Pokemon in meters
+        distance = vincenty(coord1, coord2).kilometers * 1000
+        if (distance < 2500): # GPS range
+            global exportdata
+            pokemoninfo = pokename+' '+str(int(remainingTime))+' '+str(int(distance))
+            print pokemoninfo
+            exportdata = pokemoninfo
+#        pynotify.init("Kinalisoft Pokemon status")
+#        notice = pynotify.Notification("Kinalisoft Pokemon status", pokemoninfo)
+#        if (distance < 100):
+#            notice.show()
+#
+
 def clear_stale_pokemons():
     current_time = time.time()
 
     for pokemon_key in pokemons.keys():
         pokemon = pokemons[pokemon_key]
         if current_time > pokemon['disappear_time']:
-            print "[+] removing stale pokemon %s at %f, %f from list" % (
-                pokemon['name'].encode('utf-8'), pokemon['lat'], pokemon['lng'])
+            debug("[+] removing stale pokemon %s at %f, %f from list" % (
+                pokemon['name'].encode('utf-8'), pokemon['lat'], pokemon['lng']))
             del pokemons[pokemon_key]
 
 
@@ -736,12 +780,11 @@ def register_background_thread(initial_registration=False):
             return
         if search_thread:
             debug(
-                'register_background_thread: initial registration requested but thread already running')
+                'register_background_thread: initial registration requested but search thread already running')
             return
 
         debug('register_background_thread: initial registration')
         search_thread = threading.Thread(target=main)
-
     else:
         debug('register_background_thread: queueing')
         search_thread = threading.Timer(30, main)  # delay, in seconds
@@ -749,6 +792,26 @@ def register_background_thread(initial_registration=False):
     search_thread.daemon = True
     search_thread.name = 'search_thread'
     search_thread.start()
+
+def register_notify_thread(initial_registration=False):
+    debug('register_notify_thread called')
+    global notify_thread
+
+    if initial_registration:
+        if notify_thread:
+            debug(
+                'register_notify_thread: initial registration requested but notify thread already running')
+            return
+
+        debug('register_notify_thread: initial registration')
+        notify_thread = threading.Thread(target=notify_service)
+        notify_thread.daemon = True
+        notify_thread.name = 'notify_thread'
+        notify_thread.start()
+
+#    else:
+#        notify_thread = threading.Timer(30, notify_service)
+
 
 
 def create_app():
@@ -799,9 +862,9 @@ def next_loc():
     lat = flask.request.args.get('lat', '')
     lon = flask.request.args.get('lon', '')
     if not (lat and lon):
-        print('[-] Invalid next location: %s,%s' % (lat, lon))
+        debug('[-] Invalid next location: %s,%s' % (lat, lon))
     else:
-        print('[+] Saved next location as %s,%s' % (lat, lon))
+        debug('[+] Saved next location as %s,%s' % (lat, lon))
         NEXT_LAT = float(lat)
         NEXT_LONG = float(lon)
         return 'ok'
@@ -838,12 +901,12 @@ def get_pokemarkers():
 
         pokeMarkers.append({
             'type': 'pokemon',
-            'key': pokemon_key,
+            'key': str(pokemon_key),
             'disappear_time': pokemon['disappear_time'],
-            'icon': 'static/icons/%d.png' % pokemon["id"],
+            'icon': 'https://openfun.eu/pokemon/icons/%d.png' % pokemon["id"],
             'lat': pokemon["lat"],
             'lng': pokemon["lng"],
-            'infobox': label
+            'infobox': label.encode('utf-8')
         })
 
     for gym_key in gyms:
@@ -899,11 +962,12 @@ def get_map():
         lat=origin_lat,
         lng=origin_lon,
         markers=get_pokemarkers(),
-        zoom='15', )
+        zoom='19')
     return fullmap
 
 
 if __name__ == '__main__':
     args = get_args()
     register_background_thread(initial_registration=True)
+    register_notify_thread(initial_registration=True)
     app.run(debug=True, threaded=True, host=args.host, port=args.port)
