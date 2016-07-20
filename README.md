@@ -1,3 +1,8 @@
+#Why this fork?#
+It's not final, I just wanted to have a script which notifies me about a new Pokemon around my position. You know, you're at work and you don't want to turn the app every minute just to check if there's a new Pokemon.
+I hope I'll make some cleanup after it's functional, maybe I won't need the map itself. This is the purpose of original PokemonGo-Map application and I don't intend to duplicate it, I just wanted to start with some functional code as soon as possible.
+
+
 #Support for master branch dropped.#
 ##Accepting only pull requests for develop branch. ##
 
