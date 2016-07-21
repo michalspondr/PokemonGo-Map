@@ -2,6 +2,20 @@
 It's not final, I just wanted to have a script which notifies me about a new Pokemon around my position. You know, you're at work and you don't want to turn the app every minute just to check if there's a new Pokemon.
 I hope I'll make some cleanup after it's functional, maybe I won't need the map itself. This is the purpose of original PokemonGo-Map application and I don't intend to duplicate it, I just wanted to start with some functional code as soon as possible.
 
+## Possible usage#
+This is how I use it now (change IP addresses and credentials to your own):
+
+<b>Output to file</b>
+
+./example.py -H 127.0.1.1 -u user -p password -l "Google Maps location" -st 1 2>/dev/null >>/tmp/output.log
+
+<b>Parse and stream file</b>
+
+ncat -lk 5566 -c 'tail -f /tmp/output.log'
+
+<b>Read data remotely</b>
+
+nc -v 127.0.0.1 5566
 
 #Support for master branch dropped.#
 ##Accepting only pull requests for develop branch. ##
