@@ -32,6 +32,7 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from requests.adapters import ConnectionError
 from requests.models import InvalidURL
 from transform import *
+import pynotify
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -554,9 +555,9 @@ def login(args):
 
 class NotifyHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def do_GET(self):
-        #global exportdata
-        data=str(exportdata)
+        global exportdata   # does not work, threads must handle global variables somehow different
         print exportdata
+        data=exportdata
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.send_header("Content-length", len(data))
@@ -564,7 +565,7 @@ class NotifyHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.wfile.write(data) 
 
 def notify_service():
-    print "notify service thread"
+    #    print "notify service thread"
    
     args = get_args()
 
@@ -740,16 +741,16 @@ transform_from_wgs_to_gcj(Location(Fort.Latitude, Fort.Longitude))
         #print datetime.fromtimestamp(disappear_timestamp), datetime.now()
         # distance of Pokemon in meters
         distance = vincenty(coord1, coord2).kilometers * 1000
-        if (distance < 2500): # GPS range
+        if (distance < 60): # GPS range
             global exportdata
-            pokemoninfo = pokename+' '+str(int(remainingTime))+' '+str(int(distance))
+            pokemoninfo = pokename+' -- '+str(int(remainingTime))+'s remaining, '+str(int(distance)) + 'm away'
             print pokemoninfo
+            sys.stdout.flush()
             exportdata = pokemoninfo
-#        pynotify.init("Kinalisoft Pokemon status")
-#        notice = pynotify.Notification("Kinalisoft Pokemon status", pokemoninfo)
-#        if (distance < 100):
+#            pynotify.init("Pokemon status")
+#            notice = pynotify.Notification("Pokemon status", pokemoninfo)
 #            notice.show()
-#
+
 
 def clear_stale_pokemons():
     current_time = time.time()
