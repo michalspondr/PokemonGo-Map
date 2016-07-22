@@ -3,11 +3,13 @@ It's not final, I just wanted to have a script which notifies me about a new Pok
 I hope I'll make some cleanup after it's functional, maybe I won't need the map itself. This is the purpose of original PokemonGo-Map application and I don't intend to duplicate it, I just wanted to start with some functional code as soon as possible.
 
 ## Possible usage#
-This is how I use it now (change IP addresses and credentials to your own):
+This is how I use it now (change IP addresses and credentials to your own). You need to get your user/password at https://www.pokemon.com
 
 <b>Output to file</b>
 
 ./example.py -H 127.0.1.1 -u user -p password -l "Google Maps location" -st 1 2>/dev/null >>/tmp/output.log
+
+Or simply use it without redirecting
 
 <b>Parse and stream file</b>
 
